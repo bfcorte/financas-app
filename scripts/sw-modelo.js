@@ -17,7 +17,11 @@ self.addEventListener('fetch', (e) => {
   const fontes = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (url.origin !== self.location.origin && !fontes) return;
   if (req.mode === 'navigate') {
-    e.respondWith(caches.match('./', { ignoreSearch: true }).then((r) => r || fetch(req)).catch(() => caches.match('./')));
+    // Página: rede primeiro (pega versão nova na hora), cache se estiver offline.
+    e.respondWith(fetch(req).then((res) => {
+      if (res && res.ok) { const copia = res.clone(); caches.open(CACHE).then((c) => c.put('./', copia)); }
+      return res;
+    }).catch(() => caches.match('./', { ignoreSearch: true })));
     return;
   }
   e.respondWith(caches.match(req, { ignoreSearch: true }).then((r) => r || fetch(req).then((res) => {

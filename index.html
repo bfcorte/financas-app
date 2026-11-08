@@ -32,6 +32,27 @@
       } catch (e) {}
     })();
   </script>
+  <script>
+    // iPhone instalado (standalone) com barra translúcida: o iOS às vezes informa uma altura
+    // menor que a tela e sobra uma faixa vazia embaixo. Fixa a altura na tela real.
+    (function () {
+      try {
+        var standalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+        if (!standalone) return;
+        var html = document.documentElement;
+        html.classList.add('standalone');
+        var ajustar = function () {
+          var retrato = window.matchMedia('(orientation: portrait)').matches;
+          var tela = retrato ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+          var h = Math.max(window.innerHeight, html.clientHeight, tela || 0);
+          html.style.setProperty('--app-h', h + 'px');
+        };
+        ajustar();
+        window.addEventListener('resize', ajustar);
+        window.addEventListener('orientationchange', function () { setTimeout(ajustar, 300); });
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

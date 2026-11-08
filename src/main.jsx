@@ -14,7 +14,17 @@ createRoot(document.getElementById('root')).render(
 );
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // Quando sai uma versão nova, o service worker novo assume e a página recarrega uma vez.
+  const jaTinha = !!navigator.serviceWorker.controller;
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!jaTinha || recarregou) return;
+    recarregou = true;
+    window.location.reload();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js').then((r) => {
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') r.update().catch(() => {}); });
+    }).catch(() => {});
   });
 }

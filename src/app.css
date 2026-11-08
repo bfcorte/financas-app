@@ -14,7 +14,9 @@ body {
   -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overscroll-behavior: none;
 }
-#root { position: fixed; inset: 0; }
+#root { position: fixed; top: 0; left: 0; right: 0; height: var(--app-h, 100%); }
+/* Instalado no iPhone a tela inteira é do app: ocupa também o fundo (corrige faixa vazia sob a tab bar) */
+html.standalone, html.standalone body { height: var(--app-h, 100%); overflow: hidden; }
 button, a, input, select, textarea { touch-action: manipulation; }
 a { color: var(--jade); text-decoration: none; }
 a:hover { color: var(--jade); }
@@ -50,7 +52,7 @@ select { -webkit-appearance: none; appearance: none;
 .app { position: absolute; inset: 0; overflow: hidden; background: var(--surface); }
 @media (min-width: 600px) and (hover: hover) {
   body { background: var(--desk); }
-  #root { display: grid; place-items: center; padding: 24px 0; }
+  #root { display: grid; place-items: center; padding: 24px 0; bottom: 0; height: auto; }
   .app { position: relative; inset: auto; width: 390px; height: min(844px, calc(100dvh - 48px)); border-radius: 36px;
     box-shadow: 0 30px 80px rgba(0,0,0,.22), 0 0 0 1px rgba(0,0,0,.06); }
   .app { --top: 44px; --bottom: 0px; }
