@@ -14,7 +14,6 @@ const TIPOS = [
   { k: 'classificar', t: 'Para classificar', d: 'Quando chega algo sem categoria' },
   { k: 'orcamento', t: 'Orçamento', d: 'Ao passar de 80% e ao estourar, uma vez por mês' },
   { k: 'meta', t: 'Metas', d: 'Ao chegar a 50%, 75% e ao bater a meta' },
-  { k: 'claude', t: 'Classificação do Claude', d: 'Resumo da classificação semanal' },
   { k: 'resumo', t: 'Resumos', d: 'Segunda às 9h (semana) e dia 1 (mês)' },
   { k: 'planilha', t: 'Edição direta na planilha', d: 'Quando você muda algo à mão na planilha' },
 ];
