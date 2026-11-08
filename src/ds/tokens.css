@@ -1,0 +1,35 @@
+:root, [data-theme="light"] {
+  --surface: #f4f6f3; --surface-raised: #ffffff; --surface-sunken: #e9ede8; --line: #dce2dc;
+  --ink: #0f1a16; --ink-muted: #56655e; --header: #0f2a22; --on-header: #eef6f1; --on-header-muted: #9fbcaf;
+  --jade: #0b7a5c; --jade-soft: #ddf3ea; --on-jade: #ffffff;
+  --amber: #8f5b00; --amber-soft: #fcefd6; --danger: #b42318; --danger-soft: #fde4e1;
+  --violet: #6b46a8; --violet-soft: #eee6fa; --focus: var(--jade);
+  --nota-2: #4f7096; --nota-5: #8b5ca6; --nota-10: #b8394a; --nota-20: #a1730c; --nota-50: #b95a24; --nota-100: #2e6db0; --nota-200: #7d6c5a;
+  --shadow-card: 0 1px 2px rgba(15,26,22,0.06), 0 6px 20px rgba(15,26,22,0.05);
+  --shadow-sheet: 0 -8px 32px rgba(15,26,22,0.14);
+}
+[data-theme="dark"] {
+  --surface: #0e1513; --surface-raised: #17201d; --surface-sunken: #0a100e; --line: #26312d;
+  --ink: #ecf2ee; --ink-muted: #9aaba3; --header: #0b1f19; --on-header: #eef6f1; --on-header-muted: #93b2a5;
+  --jade: #3dd6a3; --jade-soft: #0f3328; --on-jade: #062118;
+  --amber: #f2b84b; --amber-soft: #3a2a08; --danger: #ff8a7a; --danger-soft: #3d1512;
+  --violet: #c3a6f2; --violet-soft: #2a1d42; --focus: var(--jade);
+  --nota-2: #7fa3c9; --nota-5: #c19ad8; --nota-10: #ef8a96; --nota-20: #e2b23f; --nota-50: #ec9a63; --nota-100: #79aee8; --nota-200: #b9a691;
+  --shadow-card: none;
+  --shadow-sheet: 0 -8px 32px rgba(0,0,0,0.5);
+}
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 8px; --radius-md: 14px; --radius-lg: 22px; --radius-pill: 999px;
+  --font-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --font-sans: "Onest", -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+.valor-hero { font-family: var(--font-display); font-size: 44px; line-height: 48px; font-weight: 700; letter-spacing: -0.02em; }
+.titulo-tela { font-family: var(--font-display); font-size: 30px; line-height: 36px; font-weight: 700; letter-spacing: -0.01em; }
+.titulo-secao { font-family: var(--font-display); font-size: 20px; line-height: 26px; font-weight: 600; }
+.valor-card { font-family: var(--font-display); font-size: 24px; line-height: 28px; font-weight: 700; letter-spacing: -0.01em; }
+.corpo { font-family: var(--font-sans); font-size: 16px; line-height: 22px; font-weight: 400; }
+.corpo-forte { font-family: var(--font-sans); font-size: 16px; line-height: 22px; font-weight: 600; }
+.legenda { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 400; }
+.rotulo { font-family: var(--font-sans); font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.botao { font-family: var(--font-sans); font-size: 16px; line-height: 20px; font-weight: 600; }

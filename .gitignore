@@ -1,0 +1,8 @@
+node_modules/
+dist/
+financas-app-ref/
+financas-app-ref.zip
+.DS_Store
+.claude/
+test-results/
+screenshots/
