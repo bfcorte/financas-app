@@ -16,17 +16,25 @@ export default function Setup() {
 
   const testar = async () => {
     setErro('');
-    const u = api.trim(), t = token.trim();
+    let u = api.trim(), t = token.trim(), extra = {};
+    // aceita o link de configuração inteiro colado no primeiro campo
+    if (/[?&]token=/.test(u)) {
+      const q = new URLSearchParams(u.slice(u.indexOf('?') + 1));
+      u = (q.get('api') || '').trim();
+      t = (q.get('token') || '').trim();
+      const push = q.get('push'), ps = q.get('ps');
+      if (push && urlValida(push) && ps) extra = { push, ps };
+    }
     if (!urlValida(u) || !/script\.google(usercontent)?\.com/.test(new URL(u).hostname)) { setErro('Cole a URL do Aplicativo da Web (termina em /exec).'); return; }
     if (t.length < 20) { setErro('Cole o token completo.'); return; }
     setTestando(true);
     try {
       await apiGet('versao', { api: u, token: t }, 20000);
-      const c = salvarConexao({ api: u, token: t });
+      const c = salvarConexao({ api: u, token: t, ...extra });
       conectar(c);
       navegar('painel', { substituir: true });
     } catch (e) {
-      setErro(e.message || 'Não consegui conectar.');
+      setErro(e.tipo === 'auth' ? 'Token inválido: confira o link ou o token.' : (e.message || 'Não consegui conectar.'));
     } finally { setTestando(false); }
   };
 
@@ -51,9 +59,10 @@ export default function Setup() {
             </p>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <label htmlFor="api" className="rotulo" style={S.rotulo}>URL da API</label>
+            <label htmlFor="api" className="rotulo" style={S.rotulo}>URL da API ou link de configuração</label>
             <input id="api" className="campo" type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
               placeholder="https://script.google.com/macros/s/…/exec" value={api} onChange={(e) => setApi(e.target.value)} style={S.campo} />
+            <span style={{ margin: '0 4px', fontSize: 13, lineHeight: '18px', color: 'var(--ink-muted)' }}>Colou o link de configuração inteiro? Pode deixar o token em branco.</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <label htmlFor="token" className="rotulo" style={S.rotulo}>Token</label>
@@ -68,7 +77,7 @@ export default function Setup() {
           ) : null}
           <Button block icon={testando ? undefined : 'check'} onClick={testar} disabled={testando}>{testando ? 'Testando conexão…' : 'Conectar'}</Button>
           <p style={{ margin: 0, fontSize: 13, lineHeight: '18px', color: 'var(--ink-muted)', textAlign: 'center' }}>
-            Mais fácil: abra no Safari o link de configuração que já vem com a URL e o token.
+            No app instalado, cole aqui o link de configuração: ele já traz a URL, o token e as notificações.
           </p>
         </div>
       </div>
