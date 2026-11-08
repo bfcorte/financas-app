@@ -1,6 +1,6 @@
 # Finanças Pessoais
 
-PWA de finanças pessoais (React 18 + Vite) para validar o design no iPhone. Os dados são de exemplo e ficam só no aparelho (localStorage).
+PWA de finanças pessoais (React 18 + Vite) ligado a uma planilha do Google por uma API em Apps Script (código em repositório privado). O app não guarda dados no código: na primeira abertura ele pede a URL da API e o token, que ficam só no aparelho.
 
 ## Rodar
 
@@ -8,17 +8,18 @@ PWA de finanças pessoais (React 18 + Vite) para validar o design no iPhone. Os 
 npm install
 npm run dev        # desenvolvimento
 npm run build      # gera dist/
-npm run test:e2e   # roda o build no Playwright (390×844, tema claro e escuro)
 npm run icons      # regera os ícones PNG a partir de scripts/icone.svg
+FINANCAS_CONFIG=<arquivo local com a configuração> node scripts/e2e.mjs   # teste contra a API real
 ```
 
-## Estrutura
+## Como funciona
 
-- `src/ds/` — componentes do design system (Money, Icon, Button, StatusBadge, CategoryIcon, CategoryChip, TransactionRow, KpiCard, BudgetBar, GoalRing, SegmentedControl, TabBar) e `tokens.css` / `bundle.css`.
-- `src/screens/` — as 10 telas: Painel, Lançamentos, Detalhe, A classificar, Novo, Orçamento, Metas, Ajustes, Categorias e Regras.
-- `src/store.jsx` — estado compartilhado (React context + localStorage). `src/seed.js` — dados de exemplo.
-- Rotas por hash: `#/painel`, `#/lancamentos`, `#/detalhe/<id>`, `#/classificar`, `#/novo`, `#/orcamento`, `#/metas`, `#/ajustes`, `#/categorias`, `#/regras`.
+- `src/api.js` — GET `versao` / `tudo`; POST `text/plain` (sem preflight) para as escritas.
+- `src/store.jsx` — dados da planilha, atualização otimista (desfaz se falhar), polling de versão a cada 5 s, cache para abrir offline.
+- `src/conexao.js` — URL e token salvos só neste aparelho. Também aceita `#/setup?api=…&token=…&push=…&ps=…` (o fragmento não vai para servidor nenhum).
+- `src/push.js` + `scripts/sw-modelo.js` — notificações Web Push (no iPhone, só com o app na Tela de Início).
+- `src/ds/` — componentes do design system.
 
 ## Instalar no iPhone
 
-Abra a URL do GitHub Pages no Safari → Compartilhar → Adicionar à Tela de Início.
+Abra o link de configuração no Safari → Compartilhar → Adicionar à Tela de Início.

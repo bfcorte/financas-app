@@ -1,48 +1,58 @@
 import { useEffect, useState } from 'react';
 import { Icon, Button, CategoryIcon, SegmentedControl } from '../ds/index.js';
-import { useDados, brl, num, novoId } from '../store.jsx';
-import { Tela, Voltar, Folha, Alca, CabecalhoFolha, S } from '../ui.jsx';
+import { useDados, brl, num, PLURAL_GRUPO } from '../store.jsx';
+import { Tela, Voltar, Folha, Alca, CabecalhoFolha, Aviso, useAviso, S } from '../ui.jsx';
 
-const NOMES = { fixa: 'Fixas', variavel: 'Variáveis', reserva: 'Reservas', entrada: 'Entradas' };
 const TONS = ['nota-2', 'nota-5', 'nota-10', 'nota-20', 'nota-50', 'nota-100', 'nota-200', 'jade', 'violet'];
 const NOMES_TOM = { 'nota-2': 'Azul-acinzentado (R$ 2)', 'nota-5': 'Violeta (R$ 5)', 'nota-10': 'Vermelho (R$ 10)', 'nota-20': 'Amarelo (R$ 20)', 'nota-50': 'Laranja (R$ 50)', 'nota-100': 'Azul (R$ 100)', 'nota-200': 'Sépia (R$ 200)', jade: 'Jade (entradas)', violet: 'Violeta-claro (reservas)' };
 const ICONES = ['casa', 'mercado', 'garfo', 'carro', 'saude', 'pata', 'lazer', 'sacola', 'escola', 'pessoa', 'tv', 'cartao', 'raio', 'cofre', 'entrada', 'transferencia', 'banco', 'calendario'];
 const AJUDA = {
-  fixa: 'Fixa: mesmo valor todo mês (aluguel, pensão, parcelas).',
-  variavel: 'Variável: muda de mês para mês (mercado, gasolina, projetos por demanda).',
-  reserva: 'Reserva: dinheiro guardado. Entra nas Metas.',
-  entrada: 'Entrada: o que você recebe (salário, projetos).'
+  Fixa: 'Fixa: mesmo valor todo mês (aluguel, pensão, parcelas).',
+  'Variável': 'Variável: muda de mês para mês (mercado, gasolina, projetos por demanda).',
+  Reserva: 'Reserva: dinheiro guardado. Entra nas Metas.',
+  Entrada: 'Entrada: o que você recebe (salário, projetos).',
+  'Transferência': 'Transferência: entre contas ou pagamento de fatura. Fica fora dos totais.'
 };
+const ORDEM = ['Fixa', 'Variável', 'Reserva', 'Entrada', 'Transferência'];
 const regrasTxt = (n) => (n === 0 ? 'Sem regra automática' : n === 1 ? '1 regra automática' : n + ' regras automáticas');
 
 export default function Categorias({ rota }) {
-  const { d, salvarCat, delCat } = useDados();
+  const { d, criarCategoria, editarCategoria, excluirCategoria } = useDados();
   const [aberto, setAberto] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ nome: '', grupo: 'variavel', icon: 'sacola', tone: 'nota-200', orc: '' });
+  const [form, setForm] = useState({ nome: '', grupo: 'Variável', icon: 'sacola', tone: 'nota-200', orc: '' });
+  const [aviso, mostrarAviso] = useAviso(3000);
 
-  const nRegras = (id) => d.regras.filter((r) => r.catId === id).length;
-  const nLancs = (id) => d.lancs.filter((l) => l.catId === id).length;
+  const nRegras = (nome) => d.regras.filter((r) => r.cat === nome).length;
+  const nLancs = (nome) => d.lancamentos.filter((l) => l.cat === nome).length;
   const abrir = (c) => {
-    setEditId(c ? c.id : null);
-    setForm(c ? { ...c, orc: c.orc ? String(c.orc) : '' } : { nome: '', grupo: 'variavel', icon: 'sacola', tone: 'nota-200', orc: '' });
+    setEditId(c ? c.nome : null);
+    setForm(c ? { ...c, orc: c.orc ? String(c.orc) : '' } : { nome: '', grupo: 'Variável', icon: 'sacola', tone: 'nota-200', orc: '' });
     setAberto(true);
   };
   useEffect(() => { if (rota.query.nova) abrir(null); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const grupos = ['fixa', 'variavel', 'reserva', 'entrada'].map((g) => {
-    const itens = d.cats.filter((c) => c.grupo === g);
+  const grupos = ORDEM.map((g) => {
+    const itens = d.categorias.filter((c) => c.grupo === g);
     const total = itens.reduce((s, c) => s + c.orc, 0);
-    return { g, nome: NOMES[g], itens, totalTxt: (g === 'entrada' ? 'previsto ' : 'orçado ') + brl(total) };
+    return { g, nome: PLURAL_GRUPO[g], itens, totalTxt: g === 'Transferência' ? '' : (g === 'Entrada' ? 'previsto ' : 'orçado ') + brl(total) };
   }).filter((g) => g.itens.length);
 
   const setF = (p) => setForm((f) => ({ ...f, ...p }));
-  const salvar = () => {
-    if (!form.nome.trim()) { setAberto(false); return; }
-    salvarCat({ id: editId || novoId('c'), nome: form.nome.trim(), grupo: form.grupo, icon: form.icon, tone: form.tone, orc: num(form.orc) });
+  const salvar = async () => {
+    const nome = form.nome.trim();
+    if (!nome) { setAberto(false); return; }
+    if ((!editId || editId !== nome) && d.categorias.some((c) => c.nome === nome)) { mostrarAviso('Já existe uma categoria com esse nome.'); return; }
+    const c = { nome, grupo: form.grupo, icon: form.icon, tone: form.tone, orc: num(form.orc) };
     setAberto(false);
+    const r = editId ? await editarCategoria(editId, c) : await criarCategoria(c);
+    if (r) mostrarAviso(editId ? 'Categoria atualizada na planilha.' : 'Categoria criada na planilha.');
   };
-  const excluir = () => { delCat(editId); setAberto(false); };
+  const excluir = async () => {
+    setAberto(false);
+    const r = await excluirCategoria(editId);
+    if (r) mostrarAviso(r.voltaram ? 'Categoria excluída. ' + r.voltaram + (r.voltaram === 1 ? ' lançamento voltou' : ' lançamentos voltaram') + ' para A classificar.' : 'Categoria excluída.');
+  };
   const editando = editId !== null;
   const nl = editando ? nLancs(editId) : 0;
 
@@ -59,6 +69,7 @@ export default function Categorias({ rota }) {
         <div style={{ padding: '4px 16px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <h1 className="titulo-tela" style={{ margin: 0 }}>Categorias</h1>
           <p style={{ margin: 0, fontSize: 14, lineHeight: '20px', color: 'var(--ink-muted)' }}>Toque numa categoria para editar. Tudo aqui atualiza a aba Orçamento da planilha.</p>
+          {aviso ? <Aviso style={{ marginTop: 8 }}>{aviso}</Aviso> : null}
         </div>
         {grupos.map((g) => (
           <section key={g.g} style={{ padding: '22px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -68,11 +79,11 @@ export default function Categorias({ rota }) {
             </div>
             <div style={S.grupoLista}>
               {g.itens.map((c) => (
-                <button key={c.id} type="button" onClick={() => abrir(c)} style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 56, padding: '6px 16px', border: 0, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' }}>
+                <button key={c.nome} type="button" onClick={() => abrir(c)} style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 56, padding: '6px 16px', border: 0, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' }}>
                   <CategoryIcon icon={c.icon} tone={c.tone} size={36} />
                   <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                     <span style={{ fontSize: 16, fontWeight: 500 }}>{c.nome}</span>
-                    <span style={{ fontSize: 13, color: 'var(--ink-muted)' }}>{regrasTxt(nRegras(c.id))}</span>
+                    <span style={{ fontSize: 13, color: 'var(--ink-muted)' }}>{regrasTxt(nRegras(c.nome))}</span>
                   </span>
                   <span style={{ fontSize: 14, color: 'var(--ink-muted)', fontVariantNumeric: 'tabular-nums' }}>{c.orc ? brl(c.orc) : '—'}</span>
                   <span style={{ color: 'var(--ink-muted)' }}><Icon name="seta" size={18} /></span>
@@ -97,8 +108,8 @@ export default function Categorias({ rota }) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <span className="rotulo" style={S.rotulo}>Grupo</span>
-              <SegmentedControl value={form.grupo} onChange={(v) => setF({ grupo: v })} aria-label="Grupo"
-                options={[{ value: 'fixa', label: 'Fixa' }, { value: 'variavel', label: 'Variável' }, { value: 'reserva', label: 'Reserva' }, { value: 'entrada', label: 'Entrada' }]} />
+              <SegmentedControl className="seg-5" value={form.grupo} onChange={(v) => setF({ grupo: v })} aria-label="Grupo"
+                options={[{ value: 'Fixa', label: 'Fixa' }, { value: 'Variável', label: 'Variável' }, { value: 'Reserva', label: 'Reserva' }, { value: 'Entrada', label: 'Entrada' }, { value: 'Transferência', label: 'Transf.' }]} />
               <span style={{ margin: '0 4px', fontSize: 13, lineHeight: '18px', color: 'var(--ink-muted)' }}>{AJUDA[form.grupo]}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -132,7 +143,7 @@ export default function Categorias({ rota }) {
                 })}
               </div>
             </div>
-            <a href={editando ? '#/regras?cat=' + editId : '#/regras'} style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 56, padding: '6px 16px', borderRadius: 14, background: 'var(--surface-raised)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)', flex: 'none' }}>
+            <a href={editando ? '#/regras?cat=' + encodeURIComponent(editId) : '#/regras'} style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 56, padding: '6px 16px', borderRadius: 14, background: 'var(--surface-raised)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)', flex: 'none' }}>
               <span style={{ color: 'var(--jade)' }}><Icon name="raio" size={20} /></span>
               <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span style={{ fontSize: 15, fontWeight: 500 }}>Regras desta categoria</span>

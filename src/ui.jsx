@@ -104,11 +104,11 @@ export function SeletorCategoria({ grupos, selecionada, onEscolher, onFechar, la
             <span className="rotulo" style={{ margin: '0 4px', color: 'var(--ink-muted)' }}>{g.nome}</span>
             <div style={{ borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--line)' }}>
               {g.itens.map((c) => (
-                <button key={c.id} type="button" onClick={() => onEscolher(c.id)} aria-pressed={c.id === selecionada}
+                <button key={c.nome} type="button" onClick={() => onEscolher(c.nome)} aria-pressed={c.nome === selecionada}
                   style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 52, padding: '0 16px', border: 0, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' }}>
                   <CategoryIcon icon={c.icon} tone={c.tone} size={32} />
                   <span style={{ flex: 1, fontSize: 16, fontWeight: 500 }}>{c.nome}</span>
-                  {c.id === selecionada ? <span style={{ color: 'var(--jade)' }}><Icon name="check" size={22} stroke={2.2} /></span> : null}
+                  {c.nome === selecionada ? <span style={{ color: 'var(--jade)' }}><Icon name="check" size={22} stroke={2.2} /></span> : null}
                 </button>
               ))}
             </div>
@@ -160,3 +160,60 @@ export const S = {
   linhaBotao: { display: 'flex', alignItems: 'center', gap: 12, minHeight: 52, padding: '0 16px', border: 0, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' },
   card: { borderRadius: 14, background: 'var(--surface-raised)', boxShadow: 'var(--shadow-card)' }
 };
+
+/* Aviso global (erros de sincronização, ações que falharam) */
+export function ToastGlobal() {
+  const { toast } = useDados();
+  if (!toast) return null;
+  return (
+    <div role="alert" className="aviso" key={toast.id}
+      style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(100px + var(--bottom))', zIndex: 40, display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 14,
+        background: toast.tipo === 'ok' ? 'var(--jade-soft)' : 'var(--danger-soft)', color: 'var(--ink)', fontSize: 14, boxShadow: 'var(--shadow-sheet)' }}>
+      <span style={{ color: toast.tipo === 'ok' ? 'var(--jade)' : 'var(--danger)' }}><Icon name={toast.tipo === 'ok' ? 'check' : 'alerta'} size={20} stroke={2.2} /></span>
+      <span style={{ flex: 1 }}>{toast.texto}</span>
+    </div>
+  );
+}
+
+/* Faixa "Sem conexão" no topo */
+export function FaixaOffline() {
+  const { online, carregado, atualizadoEm, erroAuth } = useDados();
+  if (online && !erroAuth) return null;
+  const hora = atualizadoEm ? new Date(atualizadoEm) : null;
+  const txt = erroAuth ? 'Token recusado pela planilha. Conecte de novo em Ajustes.'
+    : carregado && hora ? 'Sem conexão: mostrando dados de ' + String(hora.getHours()).padStart(2, '0') + ':' + String(hora.getMinutes()).padStart(2, '0') : 'Sem conexão com a planilha.';
+  return (
+    <div role="status" style={{ position: 'absolute', top: 'calc(var(--top) - 4px)', left: '50%', transform: 'translateX(-50%)', zIndex: 35, maxWidth: 'calc(100% - 32px)', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: 'var(--amber-soft)', color: 'var(--ink)', fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-card)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <span style={{ color: 'var(--amber)', display: 'flex' }}><Icon name="alerta" size={16} stroke={2.2} /></span>
+      {erroAuth ? <a href="#/ajustes" style={{ color: 'var(--ink)' }}>{txt}</a> : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{txt}</span>}
+    </div>
+  );
+}
+
+/* Primeira carga, sem cache */
+export function Carregando({ texto = 'Buscando seus dados na planilha…' }) {
+  return (
+    <Tela>
+      <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: 24, textAlign: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+          <span className="girando" style={{ width: 56, height: 56, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--jade-soft)', color: 'var(--jade)' }}>
+            <Icon name="sync" size={28} />
+          </span>
+          <span style={{ fontSize: 15, color: 'var(--ink-muted)' }}>{texto}</span>
+        </div>
+      </div>
+    </Tela>
+  );
+}
+
+/* Estado vazio dentro de um card */
+export function Vazio({ icon = 'lista', titulo, texto, acao }) {
+  return (
+    <div style={{ padding: '22px 18px', borderRadius: 14, background: 'var(--surface-raised)', boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
+      <span style={{ width: 44, height: 44, borderRadius: 14, display: 'grid', placeItems: 'center', background: 'var(--surface-sunken)', color: 'var(--ink-muted)' }}><Icon name={icon} size={22} /></span>
+      {titulo ? <span style={{ fontSize: 15, fontWeight: 600 }}>{titulo}</span> : null}
+      {texto ? <span style={{ fontSize: 14, lineHeight: '20px', color: 'var(--ink-muted)', maxWidth: 280 }}>{texto}</span> : null}
+      {acao || null}
+    </div>
+  );
+}

@@ -22,6 +22,10 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     recarregou = true;
     window.location.reload();
   });
+  // clique numa notificação com o app já aberto
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.tipo === 'abrir' && typeof e.data.url === 'string' && e.data.url.startsWith('#/')) window.location.hash = e.data.url;
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then((r) => {
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') r.update().catch(() => {}); });

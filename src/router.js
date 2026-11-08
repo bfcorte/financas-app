@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export const TELAS = ['painel', 'lancamentos', 'detalhe', 'classificar', 'novo', 'orcamento', 'metas', 'ajustes', 'categorias', 'regras'];
+export const TELAS = ['painel', 'lancamentos', 'detalhe', 'classificar', 'novo', 'orcamento', 'metas', 'ajustes', 'categorias', 'regras', 'setup'];
 
 function ler() {
   const h = (window.location.hash || '').replace(/^#\/?/, '');

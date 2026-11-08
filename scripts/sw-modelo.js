@@ -29,3 +29,33 @@ self.addEventListener('fetch', (e) => {
     return res;
   })));
 });
+
+/* ---------- Notificações push ---------- */
+// O iOS revoga a assinatura de quem recebe push sem mostrar nada: sempre mostra.
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = { corpo: e.data ? e.data.text() : '' }; }
+  const titulo = d.titulo || 'Finanças';
+  e.waitUntil(self.registration.showNotification(titulo, {
+    body: d.corpo || '',
+    tag: d.tag || undefined,
+    renotify: !!d.tag,
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    data: { url: d.url || '#/painel' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const destino = (e.notification.data && e.notification.data.url) || '#/painel';
+  const alvo = new URL(destino.startsWith('#') ? self.registration.scope + destino : destino, self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((lista) => {
+    for (const c of lista) {
+      if (c.url.startsWith(self.registration.scope) && 'focus' in c) {
+        return c.focus().then((w) => (w && 'navigate' in w ? w.navigate(alvo) : c.postMessage({ tipo: 'abrir', url: destino })));
+      }
+    }
+    return self.clients.openWindow(alvo);
+  }));
+});

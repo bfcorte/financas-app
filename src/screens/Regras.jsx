@@ -1,26 +1,29 @@
 import { useState } from 'react';
 import { Icon, Button, CategoryIcon } from '../ds/index.js';
-import { useDados, novoId, NOME_GRUPO } from '../store.jsx';
-import { Tela, Voltar, Folha, Alca, CabecalhoFolha, S } from '../ui.jsx';
+import { useDados, GRUPOS, PLURAL_GRUPO } from '../store.jsx';
+import { Tela, Voltar, Folha, Alca, CabecalhoFolha, Aviso, useAviso, S } from '../ui.jsx';
 
 export default function Regras({ rota }) {
-  const { d, sel, salvarRegra, delRegra } = useDados();
+  const { d, sel, criarRegra, editarRegra, excluirRegra } = useDados();
   const [aberto, setAberto] = useState(false);
   const [editId, setEditId] = useState(null);
-  const filtroCat = sel.catPorId[rota.query.cat] ? rota.query.cat : null;
-  const padraoCat = filtroCat || (sel.catPorId.mercado ? 'mercado' : d.cats[0] && d.cats[0].id);
-  const [form, setForm] = useState({ chave: '', catId: padraoCat });
+  const [aviso, mostrarAviso] = useAviso(3000);
+  const filtroCat = sel.catPorNome[rota.query.cat] ? rota.query.cat : null;
+  const padraoCat = filtroCat || (sel.maisUsadas[0] ? sel.maisUsadas[0].nome : (d.categorias[0] ? d.categorias[0].nome : ''));
+  const [form, setForm] = useState({ chave: '', cat: padraoCat });
 
-  const abrir = (r) => { setEditId(r ? r.id : null); setForm(r ? { chave: r.chave, catId: r.catId } : { chave: '', catId: padraoCat }); setAberto(true); };
-  const salvar = () => {
+  const abrir = (r) => { setEditId(r ? r.chave : null); setForm(r ? { chave: r.chave, cat: r.cat } : { chave: '', cat: padraoCat }); setAberto(true); };
+  const salvar = async () => {
     const chave = form.chave.trim().toUpperCase();
-    if (!chave || !sel.catPorId[form.catId]) { setAberto(false); return; }
-    salvarRegra({ id: editId || novoId('r'), chave, catId: form.catId });
+    if (!chave || !sel.catPorNome[form.cat]) { setAberto(false); return; }
+    if (chave !== editId && d.regras.some((r) => r.chave.toUpperCase() === chave)) { mostrarAviso('Já existe uma regra com essa palavra.'); return; }
     setAberto(false);
+    const r = editId ? await editarRegra(editId, { chave, cat: form.cat }) : await criarRegra({ chave, cat: form.cat });
+    if (r) mostrarAviso(editId ? 'Regra atualizada na planilha.' : 'Regra criada na planilha.');
   };
-  const excluir = () => { delRegra(editId); setAberto(false); };
-  const lista = d.regras.filter((r) => !filtroCat || r.catId === filtroCat);
-  const porGrupo = ['fixa', 'variavel', 'reserva', 'entrada'].map((g) => ({ g, itens: d.cats.filter((c) => c.grupo === g) })).filter((x) => x.itens.length);
+  const excluir = async () => { setAberto(false); const r = await excluirRegra(editId); if (r) mostrarAviso('Regra excluída.'); };
+  const lista = d.regras.filter((r) => !filtroCat || r.cat === filtroCat);
+  const porGrupo = GRUPOS.map((g) => ({ g, itens: d.categorias.filter((c) => c.grupo === g) })).filter((x) => x.itens.length);
 
   return (
     <Tela>
@@ -37,17 +40,18 @@ export default function Regras({ rota }) {
           <p style={{ margin: 0, fontSize: 14, lineHeight: '20px', color: 'var(--ink-muted)' }}>Quando a descrição do banco tiver a palavra, o lançamento já entra na categoria. O que nenhuma regra pegar vai para o Claude sugerir.</p>
           {filtroCat ? (
             <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--ink-muted)' }}>
-              Mostrando só {sel.catPorId[filtroCat].nome}. <a href="#/regras" style={{ fontWeight: 600 }}>Ver todas</a>
+              Mostrando só {filtroCat}. <a href="#/regras" style={{ fontWeight: 600 }}>Ver todas</a>
             </p>
           ) : null}
+          {aviso ? <Aviso style={{ marginTop: 8 }}>{aviso}</Aviso> : null}
         </div>
         <div style={{ padding: '20px 16px 0' }}>
           {lista.length ? (
             <div style={S.grupoLista}>
               {lista.map((r) => {
-                const c = sel.catPorId[r.catId] || { nome: '—', icon: 'sacola', tone: 'nota-200' };
+                const c = sel.catPorNome[r.cat] || { nome: r.cat || '—', icon: 'sacola', tone: 'nota-200' };
                 return (
-                  <button key={r.id} type="button" onClick={() => abrir(r)} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 56, padding: '6px 16px', border: 0, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' }}>
+                  <button key={r.chave} type="button" onClick={() => abrir(r)} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 56, padding: '6px 16px', border: 0, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' }}>
                     <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <code style={{ padding: '3px 8px', borderRadius: 8, background: 'var(--surface-sunken)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.chave}</code>
                       <span style={{ color: 'var(--ink-muted)' }}><Icon name="seta" size={16} /></span>
@@ -74,10 +78,10 @@ export default function Regras({ rota }) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label htmlFor="cat" className="rotulo" style={S.rotulo}>Classificar como</label>
-              <select id="cat" className="campo" value={form.catId} onChange={(e) => setForm({ ...form, catId: e.target.value })} style={S.campo}>
+              <select id="cat" className="campo" value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })} style={S.campo}>
                 {porGrupo.map((g) => (
-                  <optgroup key={g.g} label={NOME_GRUPO[g.g]}>
-                    {g.itens.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  <optgroup key={g.g} label={PLURAL_GRUPO[g.g]}>
+                    {g.itens.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
                   </optgroup>
                 ))}
               </select>

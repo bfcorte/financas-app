@@ -70,3 +70,10 @@ select { -webkit-appearance: none; appearance: none;
   .folha, .veu, .pop, .aviso { animation: none; }
   .sw span, .sw span::after { transition: none; }
 }
+
+@keyframes fp-girar { to { transform: rotate(360deg); } }
+.girando svg { animation: fp-girar 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .girando svg { animation: none; } }
+
+/* segmented com 5 opções (Categorias > Grupo) */
+.seg-5 .fp-seg__opt { padding: 0 4px; font-size: 13px; }

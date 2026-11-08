@@ -1,7 +1,9 @@
-// Teste ponta a ponta do build (dist/) num viewport de iPhone, nos dois temas.
-// Uso: npm run build && node scripts/e2e.mjs
+// Teste ponta a ponta do build (dist/) contra a API REAL da planilha, em viewport de iPhone.
+// Só cria/edita/apaga registros "TESTE ...". Uso:
+//   FINANCAS_CONFIG=apps-script/.segredos.json node scripts/e2e.mjs [--sem-planilha]
+// Na etapa de edição manual o teste grava o id em $E2E_TROCA/teste-id.txt e espera $E2E_TROCA/editado.txt.
 import { createServer } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, access, rm } from 'node:fs/promises';
 import { extname, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
@@ -10,26 +12,36 @@ const raiz = dirname(dirname(fileURLToPath(import.meta.url)));
 const dist = resolve(raiz, 'dist');
 const shots = resolve(raiz, 'screenshots');
 await mkdir(shots, { recursive: true });
+const cfgArq = process.env.FINANCAS_CONFIG;
+if (!cfgArq) { console.error('Defina FINANCAS_CONFIG'); process.exit(2); }
+const S = JSON.parse(await readFile(cfgArq, 'utf8'));
+const SEM_PLANILHA = process.argv.includes('--sem-planilha');
+const TROCA = process.env.E2E_TROCA || '/tmp/financas-e2e';
+await mkdir(TROCA, { recursive: true });
+const SINAL = join(TROCA, 'editado.txt');
+await rm(SINAL, { force: true });
 
-const TIPOS = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml' };
+const TIPOS = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const server = createServer(async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p.endsWith('/')) p += 'index.html';
-  try {
-    const buf = await readFile(join(dist, p));
-    res.writeHead(200, { 'content-type': TIPOS[extname(p)] || 'application/octet-stream' });
-    res.end(buf);
-  } catch { res.writeHead(404); res.end('404'); }
+  try { const b = await readFile(join(dist, p)); res.writeHead(200, { 'content-type': TIPOS[extname(p)] || 'application/octet-stream' }); res.end(b); }
+  catch { res.writeHead(404); res.end('404'); }
 });
 await new Promise((r) => server.listen(4179, r));
 const URL0 = 'http://localhost:4179/';
 
+// API direta (para conferir o que ficou na planilha)
+const tudo = async () => (await fetch(S.apiUrl + '?acao=tudo&token=' + encodeURIComponent(S.appToken))).json();
+const post = async (acao, dados) => (await fetch(S.apiUrl, { method: 'POST', headers: { 'content-type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ acao, token: S.appToken, dados }) })).json();
+const esperar = async (fn, ms = 60000, passo = 2500) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return null; await new Promise((r) => setTimeout(r, passo)); } };
+
 const falhas = [];
 const passos = [];
-const ok = (m) => { passos.push(m); };
+const ok = (m) => { passos.push(m); console.log('✓ ' + m); };
+const CONEXAO = { api: S.apiUrl, token: S.appToken, push: S.pushUrl, ps: S.subscribeSecret, deviceId: 'dev-e2e-playwright' };
 
 async function semAcao(page, tela) {
-  // Todo botão precisa ter onClick (ou estar dentro de label/form); todo link precisa de href.
   const r = await page.evaluate(() => {
     const ruins = [];
     document.querySelectorAll('button, a').forEach((el) => {
@@ -40,407 +52,261 @@ async function semAcao(page, tela) {
     });
     return ruins;
   });
-  if (r.length) falhas.push(`[${tela}] elementos sem ação: ${r.join(' | ')}`);
+  if (r.length) falhas.push(`[${tela}] sem ação: ${r.join(' | ')}`);
 }
+const shot = async (page, nome, tema) => { await page.waitForTimeout(300); await page.screenshot({ path: join(shots, `${tema}-${nome}.png`) }); };
 
-async function shot(page, nome, tema) {
-  await page.waitForTimeout(350);
-  await page.screenshot({ path: join(shots, `${tema}-${nome}.png`) });
-}
-
-async function rodar(tema) {
-  const browser = await chromium.launch();
+async function novoContexto(browser, tema) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: tema, locale: 'pt-BR', reducedMotion: 'reduce' });
   const page = await ctx.newPage();
   const erros = [];
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') erros.push(`${m.type()}: ${m.text()}`); });
   page.on('pageerror', (e) => erros.push('pageerror: ' + e.message));
-  page.on('requestfailed', (r) => { if (!r.url().includes('fonts.g')) erros.push('requestfailed: ' + r.url()); });
-  const tab = (nome) => page.locator('.fp-tabbar').getByRole('button', { name: new RegExp(nome + '$') });
-  const ir = async (h) => { await page.goto(URL0 + '#/' + h); await page.waitForTimeout(150); };
+  page.on('requestfailed', (r) => erros.push('requestfailed: ' + r.url().replace(/token=[^&]+/, 'token=***').slice(0, 140) + ' ' + (r.failure() || {}).errorText));
+  return { ctx, page, erros };
+}
 
-  await page.goto(URL0);
-  await page.evaluate(() => localStorage.clear());
+async function rodarLeitura(browser, tema) {
+  const { ctx, page, erros } = await novoContexto(browser, tema);
+  // 1) Sem conexão configurada: tela "Conectar à planilha"; dados inválidos dão erro
+  await page.goto(URL0 + '#/painel');
+  await expect(page.getByRole('heading', { name: 'Conectar à planilha' })).toBeVisible();
+  await shot(page, 'setup', tema);
+  await page.locator('#api').fill('https://script.google.com/macros/s/exemplo-invalido/exec');
+  await page.locator('#token').fill('token-de-teste-invalido-123456');
+  await page.getByRole('button', { name: 'Conectar' }).click();
+  await expect(page.getByRole('alert')).toBeVisible({ timeout: 30000 });
+  await semAcao(page, 'setup');
+  erros.length = 0; // o erro de CORS da URL inválida acima é esperado
+  ok(tema + ': setup recusa conexão inválida');
+
+  // 2) Link de configuração (#/setup?...): salva no aparelho e limpa a URL
+  const q = new URLSearchParams({ api: CONEXAO.api, token: CONEXAO.token, push: CONEXAO.push, ps: CONEXAO.ps }).toString();
+  await page.goto(URL0 + '#/setup?' + q);
   await page.reload();
-  expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe(tema);
-  ok('tema ' + tema);
+  await expect(page.getByText('Sobrou no mês')).toBeVisible({ timeout: 60000 });
+  expect(page.url()).not.toContain('token=');
+  ok(tema + ': link de configuração conecta e some da URL');
 
-  // Todas as rotas abrem direto
-  for (const t of ['painel', 'lancamentos', 'detalhe', 'classificar', 'novo', 'orcamento', 'metas', 'ajustes', 'categorias', 'regras']) {
-    await ir(t);
-    await expect(page.locator('.tela')).toBeVisible();
-    await semAcao(page, t);
-    await shot(page, t, tema);
-  }
-  ok('rotas diretas + screenshots');
-
-  // ---------- Tema: botão no Painel e opção em Ajustes ----------
-  const outro = tema === 'dark' ? 'light' : 'dark';
-  const dataTema = () => page.evaluate(() => document.documentElement.dataset.theme);
-  await ir('painel');
-  await page.getByRole('button', { name: tema === 'dark' ? 'Usar tema claro' : 'Usar tema escuro' }).click();
-  expect(await dataTema()).toBe(outro);
-  await page.reload();
-  expect(await dataTema()).toBe(outro);
-  await shot(page, 'painel-forcado-' + outro, tema);
-  await ir('ajustes');
-  await expect(page.getByRole('tab', { name: outro === 'light' ? 'Claro' : 'Escuro' })).toHaveAttribute('aria-selected', 'true');
-  await shot(page, 'ajustes-tema', tema);
-  await page.getByRole('tab', { name: 'Automático' }).click();
-  expect(await dataTema()).toBe(tema);
-  await page.getByRole('tab', { name: 'Claro' }).click();
-  expect(await dataTema()).toBe('light');
-  await page.getByRole('button', { name: 'Restaurar dados de exemplo' }).click();
-  await page.getByRole('button', { name: 'Restaurar dados', exact: true }).click();
-  expect(await dataTema()).toBe('light');
-  await page.getByRole('tab', { name: 'Automático' }).click();
-  expect(await dataTema()).toBe(tema);
-  ok('tema: alternar no Painel, escolher em Ajustes, persiste e não é apagado ao restaurar');
-
-  // ---------- Painel ----------
-  await ir('painel');
-  await expect(page.getByText('Sobrou no mês')).toBeVisible();
-  await expect(page.locator('.fp-tabbar__badge')).toHaveText('3');
-  await page.getByRole('button', { name: /Novembro 2026/ }).click();
-  await expect(page.getByRole('dialog', { name: 'Escolher mês' })).toBeVisible();
-  await semAcao(page, 'painel/mes');
-  await shot(page, 'painel-mes', tema);
-  await page.getByRole('dialog').getByRole('button', { name: /Outubro 2026/ }).click();
-  await expect(page.getByRole('button', { name: /Outubro 2026/ })).toBeVisible();
-  await expect(page.getByText('Para onde foi')).toBeVisible();
-  await page.getByRole('button', { name: /Outubro 2026/ }).click();
-  await page.getByRole('dialog').getByRole('button', { name: /Novembro 2026/ }).click();
-  await expect(page.getByRole('button', { name: /Novembro 2026/ })).toBeVisible();
-  ok('painel: trocar mês');
-  await page.getByRole('link', { name: 'Ver tudo' }).click(); await expect(page.locator('h1')).toHaveText('Orçamento');
-  await ir('painel'); await page.getByRole('link', { name: 'Ver todos' }).click(); await expect(page.locator('h1')).toHaveText('Lançamentos');
-  await ir('painel'); await page.getByRole('link', { name: 'Ajustes' }).click(); await expect(page.locator('h1')).toHaveText('Ajustes');
-  ok('painel: links');
-
-  // ---------- Classificar ----------
-  await ir('painel');
-  await page.getByRole('link', { name: /3 lançamentos para classificar/ }).click();
-  await expect(page.getByText('1 de 3')).toBeVisible();
-  await expect(page.getByText('Sugerida pelo Claude')).toBeVisible();
-  await page.getByRole('button', { name: /Sugerida pelo Claude/ }).click();
-  const dlg = page.getByRole('dialog', { name: 'Escolher categoria' });
+  // 3) Painel com dados reais e troca de mês
+  await page.waitForTimeout(1500);
+  await shot(page, 'painel', tema);
+  await semAcao(page, 'painel');
+  const btnMes = page.getByRole('button', { name: /\d{4}$/ }).first();
+  const mesAtual = (await btnMes.textContent()).trim();
+  await btnMes.click();
+  const dlg = page.getByRole('dialog', { name: 'Escolher mês' });
   await expect(dlg).toBeVisible();
-  await semAcao(page, 'classificar/categoria');
-  await shot(page, 'classificar-categoria', tema);
-  await dlg.getByRole('searchbox').fill('laz');
-  await expect(dlg.getByRole('button', { name: 'Mercado' })).toHaveCount(0);
-  await dlg.getByRole('button', { name: 'Lazer' }).click();
-  await expect(page.getByText('Escolhida por você · sugestão era Outros')).toBeVisible();
-  await page.getByRole('checkbox', { name: 'Criar regra' }).uncheck({ force: true });
-  await page.getByRole('button', { name: 'Classificar como Lazer' }).click();
-  await expect(page.getByText('2 de 3')).toBeVisible();
-  await page.getByRole('button', { name: 'Classificar como Cuidados pessoais' }).click();
-  await expect(page.getByText('3 de 3')).toBeVisible();
-  await page.getByRole('button', { name: 'Pular por agora' }).click();
-  await expect(page.getByText('1 ficou para depois')).toBeVisible();
-  await expect(page.locator('.fp-tabbar__badge')).toHaveCount(0); // sem tab bar aqui
-  await page.getByRole('button', { name: 'Classificar os que ficaram' }).click();
-  await expect(page.getByText('1 de 1')).toBeVisible();
-  await page.getByRole('button', { name: 'Classificar como Compras' }).click();
-  await expect(page.getByText('Tudo classificado')).toBeVisible();
-  await shot(page, 'classificar-fim', tema);
-  await page.getByRole('link', { name: 'Voltar ao Painel' }).click();
-  await expect(page.getByText(/para classificar/)).toHaveCount(0);
-  await expect(page.locator('.fp-tabbar__badge')).toHaveCount(0);
-  ok('classificar 3 itens, badge zerado');
-  await ir('regras');
-  await expect(page.getByText('STUDIO PILATES')).toBeVisible();
-  await expect(page.getByText('ZP*ARR')).toBeVisible();
-  await expect(page.getByText('DESCENDENCIA')).toHaveCount(0);
-  ok('classificar: regras criadas só com o interruptor ligado');
-  await ir('classificar');
-  await expect(page.getByText('Tudo classificado')).toBeVisible();
-  await page.getByRole('button', { name: 'Ver de novo (demonstração)' }).click();
-  await expect(page.getByText('1 de 3')).toBeVisible();
-  await ir('painel');
-  await expect(page.locator('.fp-tabbar__badge')).toHaveText('3');
-  ok('classificar: demonstração de novo');
+  await shot(page, 'painel-mes', tema);
+  const outros = dlg.getByRole('button').filter({ hasNotText: mesAtual });
+  if (await outros.count()) {
+    const alvo = (await outros.first().locator('span').first().textContent()).trim();
+    await outros.first().click();
+    await expect(page.getByRole('button', { name: new RegExp(alvo) })).toBeVisible();
+    await shot(page, 'painel-outro-mes', tema);
+    await page.getByRole('button', { name: new RegExp(alvo) }).click();
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(mesAtual) }).click();
+  } else { await page.keyboard.press('Escape'); }
+  ok(tema + ': painel com dados reais, trocar mês');
 
-  // ---------- Lançamentos ----------
-  await tab('Lançamentos').click();
+  // 4) Lançamentos: buscar, filtrar, abrir detalhe
+  await page.locator('.fp-tabbar').getByRole('button', { name: /Lançamentos$/ }).click();
   await expect(page.locator('h1')).toHaveText('Lançamentos');
-  const busca = page.getByPlaceholder('Buscar por descrição ou categoria');
-  await busca.fill('sonda');
-  await expect(page.locator('.fp-row')).toHaveCount(1);
-  await busca.fill('xyzw');
-  await expect(page.getByText('Nenhum lançamento com “xyzw”.')).toBeVisible();
-  await busca.fill('');
+  await shot(page, 'lancamentos', tema);
+  await semAcao(page, 'lancamentos');
+  const linhas = page.locator('.fp-row');
+  const n0 = await linhas.count();
+  await page.getByPlaceholder('Buscar por descrição ou categoria').fill('zzqqxx');
+  await expect(page.getByText('Nenhum lançamento com “zzqqxx”.')).toBeVisible();
+  await page.getByPlaceholder('Buscar por descrição ou categoria').fill('');
   await page.getByRole('tab', { name: 'Entradas' }).click();
-  await expect(page.locator('.fp-row')).toHaveCount(1);
-  await expect(page.getByText('+R$ 7.450,00', { exact: true }).first()).toBeVisible();
+  const nEnt = await linhas.count();
+  expect(await page.locator('.fp-row .fp-money--despesa').count()).toBe(0);
   await page.getByRole('tab', { name: 'Despesas' }).click();
-  expect(await page.locator('.fp-money--entrada').count()).toBe(0);
+  expect(await page.locator('.fp-row .fp-money--entrada').count()).toBe(0);
   await page.getByRole('tab', { name: 'Tudo' }).click();
-  await page.getByRole('button', { name: 'Importar do Itaú agora' }).click();
-  await expect(page.getByText(/Itaú consultado agora/)).toBeVisible();
-  await shot(page, 'lancamentos-aviso', tema);
-  ok('lançamentos: buscar, filtrar, importar');
-  await page.locator('a[href^="#/classificar?id="]').first().click();
-  await expect(page.locator('h1')).toHaveText('A classificar');
-  ok('lançamentos: pendente abre A classificar');
-
-  // ---------- Detalhe ----------
-  await ir('lancamentos');
-  await page.getByRole('link', { name: /Sonda Supermercados/ }).click();
-  await expect(page.locator('h1')).toHaveText('Sonda Supermercados');
-  await expect(page.getByText('Toda descrição com “SONDA” vira Mercado.')).toBeVisible();
-  await page.getByRole('button', { name: /Categoria\s*Mercado/ }).click();
-  const tc = page.getByRole('dialog', { name: 'Trocar categoria' });
-  await tc.getByRole('button', { name: 'Alimentação fora' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Atualizar regra' })).toBeVisible();
-  await shot(page, 'detalhe-regra', tema);
-  await page.getByRole('button', { name: 'Sim, atualizar regra' }).click();
-  await expect(page.getByText('Categoria e regra atualizadas na planilha.')).toBeVisible();
-  await expect(page.getByText('Toda descrição com “SONDA” vira Alimentação fora.')).toBeVisible();
-  await page.getByRole('button', { name: /Categoria\s*Alimentação fora/ }).click();
-  await page.getByRole('dialog', { name: 'Trocar categoria' }).getByRole('button', { name: 'Mercado' }).click();
-  await page.getByRole('button', { name: 'Só este lançamento' }).click();
-  await expect(page.getByText('Categoria trocada só neste lançamento.')).toBeVisible();
-  ok('detalhe: trocar categoria + pergunta da regra');
-  await page.locator('#obs').fill('compra do mês');
-  await page.getByRole('button', { name: 'Editar' }).click();
-  await expect(page.getByRole('dialog', { name: 'Editar lançamento' })).toBeVisible();
-  await semAcao(page, 'detalhe/editar');
-  await shot(page, 'detalhe-editar', tema);
-  await page.locator('#edesc').fill('Sonda Teste');
-  await page.locator('#evalor').fill('600,50');
-  await page.locator('#edata').fill('2026-11-04');
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.locator('h1')).toHaveText('Sonda Teste');
-  await expect(page.getByText('Lançamento atualizado na planilha.')).toBeVisible();
-  await expect(page.getByText('Qua, 04/11/2026')).toBeVisible();
-  const urlDet = page.url();
-  await page.reload();
-  await expect(page.locator('#obs')).toHaveValue('compra do mês');
-  await expect(page.locator('h1')).toHaveText('Sonda Teste');
-  ok('detalhe: editar + observação persistem');
-  await page.getByRole('button', { name: 'Excluir lançamento' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Excluir lançamento' })).toBeVisible();
-  await shot(page, 'detalhe-excluir', tema);
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Excluir lançamento' }).click();
-  await expect(page.locator('h1')).toHaveText('Lançamentos');
-  await expect(page.getByText('Sonda Teste')).toHaveCount(0);
-  await page.goto(urlDet);
-  await expect(page.getByText('Este lançamento não existe mais.')).toBeVisible();
-  ok('detalhe: excluir');
-
-  // ---------- Novo ----------
-  await ir('painel');
-  await tab('Novo lançamento').click();
-  await expect(page.getByRole('heading', { name: 'Novo lançamento' })).toBeVisible();
-  await page.getByRole('button', { name: 'Salvar lançamento' }).click();
-  await expect(page.getByText('Digite o valor para salvar.')).toBeVisible();
-  await page.getByRole('tab', { name: 'Entrada' }).click();
-  await expect(page.getByText('Salário', { exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Reserva' }).click();
-  await expect(page.getByText('Reserva de emergência', { exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Despesa' }).click();
-  await page.getByPlaceholder('0,00').fill('123,45');
-  await page.locator('#desc').fill('Teste E2E');
-  await page.getByRole('button', { name: /toque para trocar/ }).click();
-  await page.getByRole('dialog', { name: 'Escolher categoria' }).getByRole('button', { name: 'Lazer' }).click();
-  await page.getByRole('button', { name: /Conta/ }).click();
-  await semAcao(page, 'novo/conta');
-  await shot(page, 'novo-conta', tema);
-  await page.getByRole('dialog', { name: 'Conta' }).getByRole('button', { name: 'Dinheiro' }).click();
-  await page.getByRole('button', { name: /Forma/ }).click();
-  await page.getByRole('dialog', { name: 'Forma' }).getByRole('button', { name: 'Crédito' }).click();
-  await page.getByRole('button', { name: /Data/ }).click();
-  await page.getByRole('dialog', { name: 'Data' }).getByRole('button', { name: /Ontem/ }).click();
-  await page.getByRole('button', { name: /Parcelas/ }).click();
-  await page.getByRole('dialog', { name: 'Parcelas' }).getByRole('button', { name: '3x' }).click();
-  await shot(page, 'novo-preenchido', tema);
-  await page.getByRole('button', { name: 'Salvar lançamento' }).click();
-  await expect(page.getByText('Sobrou no mês')).toBeVisible();
-  await tab('Lançamentos').click();
-  await expect(page.getByText('Teste E2E')).toBeVisible();
-  await expect(page.locator('.fp-row', { hasText: 'Teste E2E' }).getByText('1/3')).toBeVisible();
-  await expect(page.locator('.fp-row', { hasText: 'Teste E2E' }).getByText('R$ 41,15')).toBeVisible();
-  await page.reload();
-  await expect(page.getByText('Teste E2E')).toBeVisible();
-  ok('novo: criar lançamento parcelado, aparece na lista e persiste');
-  await ir('novo');
-  await page.getByRole('link', { name: 'Cancelar' }).click();
-  await expect(page.getByText('Sobrou no mês')).toBeVisible();
-  ok('novo: cancelar');
-
-  // ---------- Orçamento ----------
-  await tab('Orçamento').click();
-  await expect(page.getByText('Gasto do orçado · novembro')).toBeVisible();
-  await page.getByRole('tab', { name: '3 meses' }).click();
-  await expect(page.getByText('Gasto do orçado · set a nov')).toBeVisible();
-  await page.getByRole('tab', { name: 'Ano' }).click();
-  await expect(page.getByText('Gasto do orçado · 2026')).toBeVisible();
-  await page.getByRole('tab', { name: 'Mês' }).click();
-  await page.getByRole('link', { name: 'Editar categorias e valores' }).click();
-  await expect(page.locator('h1')).toHaveText('Categorias');
-  ok('orçamento: períodos e link');
-
-  // ---------- Metas ----------
-  await ir('metas');
-  await page.getByRole('button', { name: 'Nova meta' }).click();
-  await expect(page.getByRole('dialog', { name: 'Nova meta' })).toBeVisible();
-  await shot(page, 'metas-nova', tema);
-  await page.locator('#nome').fill('Notebook');
-  await page.locator('#alvo').fill('5.000');
-  await page.locator('#mensal').fill('500');
-  await expect(page.getByText('R$ 500 por mês · faltam 10 meses')).toBeVisible();
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.getByText('Notebook')).toBeVisible();
-  await expect(page.getByText('Em 4 metas')).toBeVisible();
-  await page.getByRole('button', { name: /Notebook/ }).click();
-  await page.locator('#aporte').fill('200');
-  await page.getByRole('button', { name: 'Guardar', exact: true }).click();
-  await expect(page.getByText('R$ 200 de R$ 5.000')).toBeVisible();
-  await shot(page, 'metas-editar', tema);
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.locator('.fp-goal', { hasText: 'Notebook' }).getByText('4%')).toBeVisible();
-  await ir('lancamentos');
-  await expect(page.locator('.fp-row', { hasText: 'Notebook' }).first()).toBeVisible();
-  await ir('metas');
-  await page.getByRole('button', { name: /Notebook/ }).click();
-  await page.getByRole('button', { name: 'Excluir meta' }).click();
-  await expect(page.getByText('Em 3 metas')).toBeVisible();
-  await page.getByRole('button', { name: /Viagem de férias/ }).click();
-  await page.getByRole('button', { name: 'Cancelar' }).click();
-  ok('metas: nova, guardar dinheiro, excluir');
-
-  // ---------- Ajustes ----------
-  await ir('ajustes');
-  const sw = page.getByRole('checkbox', { name: 'Avisar quando chegar lançamento' });
-  await expect(sw).not.toBeChecked();
-  await sw.check({ force: true });
-  await page.getByRole('checkbox', { name: 'Importar todo dia' }).uncheck({ force: true });
-  await page.getByRole('checkbox', { name: 'Classificar com o Claude' }).uncheck({ force: true });
-  await page.reload();
-  await expect(page.getByRole('checkbox', { name: 'Avisar quando chegar lançamento' })).toBeChecked();
-  await expect(page.getByRole('checkbox', { name: 'Importar todo dia' })).not.toBeChecked();
-  await page.getByRole('checkbox', { name: 'Importar todo dia' }).check({ force: true });
-  await page.getByRole('checkbox', { name: 'Classificar com o Claude' }).check({ force: true });
-  await page.getByRole('button', { name: 'Importar agora' }).click();
-  await expect(page.getByRole('button', { name: 'Nada novo desde 07:02' })).toBeVisible();
-  await expect(page.getByText('Conexão com a planilha: em breve')).toBeVisible();
-  expect(await page.locator('a[href*="docs.google"]').count()).toBe(0);
-  ok('ajustes: toggles persistem, importar agora');
-
-  // ---------- Categorias ----------
-  await page.getByRole('link', { name: /Categorias/ }).click();
-  await page.getByRole('button', { name: 'Nova' }).click();
-  await page.locator('#nome').fill('Farmácia');
-  await page.locator('#orc').fill('150');
-  await page.getByRole('button', { name: 'Vermelho (R$ 10)' }).click();
-  await page.getByRole('button', { name: 'saude', exact: true }).click();
-  await shot(page, 'categorias-nova', tema);
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.getByRole('button', { name: /Farmácia/ })).toBeVisible();
-  await ir('novo');
-  await page.getByRole('button', { name: /toque para trocar/ }).click();
-  await page.getByRole('dialog').getByRole('searchbox').fill('farm');
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Farmácia' })).toBeVisible();
-  await page.getByRole('dialog').getByRole('link', { name: 'Nova categoria' }).click();
-  await expect(page.getByRole('dialog', { name: 'Nova categoria' })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancelar' }).click();
-  await ir('regras');
-  await page.getByRole('button', { name: 'Nova' }).click();
-  await expect(page.locator('#cat option', { hasText: 'Farmácia' })).toHaveCount(1);
-  await page.getByRole('button', { name: 'Cancelar' }).click();
-  ok('categorias: criar e aparecer nos seletores');
-  await ir('categorias');
-  await page.getByRole('button', { name: /Farmácia/ }).click();
-  await page.getByRole('tab', { name: 'Fixa' }).click();
-  await page.locator('#nome').fill('Farmácia e drogaria');
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.getByRole('button', { name: /Farmácia e drogaria/ })).toBeVisible();
-  await page.getByRole('button', { name: /Farmácia e drogaria/ }).click();
-  await page.getByRole('button', { name: 'Excluir categoria' }).click();
-  await expect(page.getByText('Farmácia e drogaria')).toHaveCount(0);
-  await page.getByRole('button', { name: /Petshop/ }).click();
-  await page.getByRole('link', { name: /Regras desta categoria/ }).click();
-  await expect(page.getByText('Mostrando só Petshop.')).toBeVisible();
-  await expect(page.getByText('VETCARE')).toBeVisible();
-  await page.getByRole('link', { name: 'Ver todas' }).click();
-  ok('categorias: editar, excluir, regras da categoria');
-
-  // ---------- Regras ----------
-  await ir('regras');
-  await page.getByRole('button', { name: 'Nova' }).click();
-  await page.locator('#chave').fill('drogasil');
-  await expect(page.locator('#chave')).toHaveValue('DROGASIL');
-  await page.locator('#cat').selectOption({ label: 'Saúde' });
-  await shot(page, 'regras-nova', tema);
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.getByRole('button', { name: /DROGASIL/ })).toBeVisible();
-  await page.getByRole('button', { name: /DROGASIL/ }).click();
-  await page.locator('#cat').selectOption({ label: 'Compras' });
-  await page.getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.getByRole('button', { name: /DROGASIL.*Compras/ })).toBeVisible();
-  await page.getByRole('button', { name: /DROGASIL/ }).click();
-  await page.getByRole('button', { name: 'Excluir regra' }).click();
-  await expect(page.getByText('DROGASIL')).toHaveCount(0);
-  ok('regras: criar, editar, excluir');
-
-  // ---------- Categoria excluída devolve lançamentos ----------
-  await ir('categorias');
-  await page.getByRole('button', { name: /Petshop/ }).click();
-  await page.getByRole('button', { name: 'Excluir categoria' }).click();
-  await ir('painel');
-  await expect(page.locator('.fp-tabbar__badge')).toHaveText('5');
-  ok('categorias: excluir devolve para A classificar');
-
-  // ---------- Restaurar ----------
-  await ir('ajustes');
-  await page.getByRole('button', { name: 'Restaurar dados de exemplo' }).click();
-  await shot(page, 'ajustes-restaurar', tema);
-  await page.getByRole('button', { name: 'Restaurar dados', exact: true }).click();
-  await expect(page.getByText('Dados de exemplo restaurados.')).toBeVisible();
-  await ir('painel');
-  await expect(page.locator('.fp-tabbar__badge')).toHaveText('3');
-  await ir('lancamentos');
-  await expect(page.getByText('Teste E2E')).toHaveCount(0);
-  ok('ajustes: restaurar dados de exemplo');
-
-  // ---------- Tab bar e voltar ----------
-  for (const [t, h] of [['Painel', null], ['Lançamentos', 'Lançamentos'], ['Orçamento', 'Orçamento'], ['Metas', 'Metas']]) {
-    await tab(t).click();
-    if (h) await expect(page.locator('h1')).toHaveText(h); else await expect(page.getByText('Sobrou no mês')).toBeVisible();
+  expect(await linhas.count()).toBe(n0);
+  ok(tema + `: lançamentos buscar/filtrar (${n0} no mês, ${nEnt} entradas)`);
+  if (n0) {
+    await page.locator('a[href^="#/detalhe/"]').first().click();
+    await expect(page.getByRole('button', { name: 'Editar' })).toBeVisible();
+    await shot(page, 'detalhe', tema);
+    await semAcao(page, 'detalhe');
+    ok(tema + ': abrir detalhe');
   }
-  for (const [rota, link, alvo] of [['detalhe', 'Lançamentos', 'Lançamentos'], ['classificar', 'Painel', null], ['categorias', 'Ajustes', 'Ajustes'], ['regras', 'Ajustes', 'Ajustes'], ['ajustes', 'Painel', null]]) {
-    await ir(rota);
-    await page.getByRole('link', { name: link, exact: true }).first().click();
-    if (alvo) await expect(page.locator('h1')).toHaveText(alvo); else await expect(page.getByText('Sobrou no mês')).toBeVisible();
+
+  // 5) Demais telas renderizam e não têm botão sem ação
+  for (const t of ['orcamento', 'metas', 'ajustes', 'categorias', 'regras', 'classificar', 'novo']) {
+    await page.goto(URL0 + '#/' + t);
+    await page.waitForTimeout(800);
+    await shot(page, t, tema);
+    await semAcao(page, t);
   }
-  ok('tab bar e voltar');
+  await page.goto(URL0 + '#/orcamento');
+  for (const p of ['3 meses', 'Ano', 'Mês']) await page.getByRole('tab', { name: p }).click();
+  ok(tema + ': demais telas sem botão sem ação');
+
+  // 6) Offline: mostra o cache com a faixa e bloqueia edição
+  await page.goto(URL0 + '#/painel');
+  await expect(page.getByText('Sobrou no mês')).toBeVisible();
+  await page.waitForTimeout(1000);
+  await ctx.setOffline(true);
+  await page.reload().catch(() => {});
+  await expect(page.getByText(/Sem conexão: mostrando dados de \d\d:\d\d/)).toBeVisible({ timeout: 30000 });
+  await shot(page, 'offline', tema);
+  await page.evaluate(() => { location.hash = '#/novo'; });
+  await page.getByPlaceholder('0,00').fill('1,00');
+  await page.getByRole('button', { name: 'Salvar lançamento' }).click();
+  await expect(page.getByText('Sem conexão: não dá para lançar agora.')).toBeVisible();
+  await ctx.setOffline(false);
+  ok(tema + ': offline mostra cache e bloqueia edição');
 
   // Sem rolagem horizontal; inputs com fonte >= 16px
-  for (const t of ['painel', 'lancamentos', 'novo', 'metas', 'categorias']) {
-    await ir(t);
-    const r = await page.evaluate(() => ({ larg: document.documentElement.scrollWidth, pequenos: [...document.querySelectorAll('input, select, textarea')].filter((e) => parseFloat(getComputedStyle(e).fontSize) < 16).length }));
-    if (r.larg > 390) falhas.push(`[${t}] rolagem horizontal: ${r.larg}px`);
-    if (r.pequenos) falhas.push(`[${t}] ${r.pequenos} campo(s) com fonte < 16px`);
+  for (const t of ['painel', 'lancamentos', 'novo', 'metas', 'ajustes', 'categorias']) {
+    await page.goto(URL0 + '#/' + t);
+    await page.waitForTimeout(400);
+    const r = await page.evaluate(() => ({ larg: document.documentElement.scrollWidth, pequenos: [...document.querySelectorAll('input:not([type=checkbox]):not([type=radio]), select, textarea')].filter((e) => parseFloat(getComputedStyle(e).fontSize) < 16).length }));
+    if (r.larg > 390) falhas.push(`[${tema}/${t}] rolagem horizontal: ${r.larg}px`);
+    if (r.pequenos) falhas.push(`[${tema}/${t}] ${r.pequenos} campo(s) com fonte < 16px`);
   }
-
-  // PWA
-  const man = await page.evaluate(async () => (await fetch('./manifest.webmanifest')).json());
-  expect(man.display).toBe('standalone');
-  for (const i of man.icons) { const s = await page.evaluate(async (src) => (await fetch(src)).status, i.src); expect(s).toBe(200); }
-  ok('manifest e ícones');
-
-  if (erros.length) falhas.push(`[${tema}] console: \n  ` + erros.join('\n  '));
-  await browser.close();
+  // ERR_ABORTED = requisição cortada por recarregar/navegar; o resto do offline é esperado no passo 6
+  const filtrados = erros.filter((e) => !/ERR_INTERNET_DISCONNECTED|ERR_ABORTED|Failed to fetch|ERR_NAME_NOT_RESOLVED|status of 4\d\d/.test(e));
+  if (filtrados.length) falhas.push(`[${tema}] console:\n  ` + filtrados.join('\n  '));
+  await ctx.close();
 }
 
+async function rodarEscrita(browser, tema) {
+  const { ctx, page, erros } = await novoContexto(browser, tema);
+  await ctx.addInitScript((c) => { try { if (!localStorage.getItem('financas:conexao')) localStorage.setItem('financas:conexao', JSON.stringify(c)); } catch (e) {} }, CONEXAO);
+  const tab = (n) => page.locator('.fp-tabbar').getByRole('button', { name: new RegExp(n + '$') });
+  await page.goto(URL0 + '#/painel');
+  await expect(page.getByText('Sobrou no mês')).toBeVisible({ timeout: 60000 });
+
+  // ---------- lançamento TESTE APP ----------
+  await tab('Novo lançamento').click();
+  await page.getByPlaceholder('0,00').fill('1,00');
+  await page.locator('#desc').fill('TESTE APP');
+  await page.getByRole('button', { name: /toque para trocar|Escolher categoria/ }).click();
+  const pick = page.getByRole('dialog', { name: 'Escolher categoria' });
+  await pick.getByRole('searchbox').fill('Mercado');
+  await pick.getByRole('button', { name: 'Mercado', exact: true }).click();
+  await shot(page, 'novo-teste', tema);
+  await page.getByRole('button', { name: 'Salvar lançamento' }).click();
+  await expect(page.getByText('Lançamento salvo na planilha.')).toBeVisible({ timeout: 60000 });
+  const criado = await esperar(async () => (await tudo()).lancamentos.find((l) => l.desc === 'TESTE APP'));
+  if (!criado) throw new Error('TESTE APP não apareceu na planilha');
+  expect(criado.valor).toBe(1); expect(criado.cat).toBe('Mercado'); expect(criado.origem).toBe('Manual'); expect(criado.id.startsWith('man-')).toBe(true);
+  ok('planilha: TESTE APP criado pelo app (R$ 1,00, Mercado, Manual, ' + criado.data + ')');
+
+  await page.goto(URL0 + '#/detalhe/' + criado.id);
+  await expect(page.locator('h1')).toHaveText('TESTE APP', { timeout: 30000 });
+  await page.getByRole('button', { name: 'Editar' }).click();
+  await page.locator('#evalor').fill('2,50');
+  await page.getByRole('button', { name: 'Salvar' }).click();
+  await expect(page.getByText('Lançamento atualizado na planilha.')).toBeVisible({ timeout: 60000 });
+  expect(await esperar(async () => (await tudo()).lancamentos.find((l) => l.id === criado.id && l.valor === 2.5))).toBeTruthy();
+  ok('planilha: valor editado para R$ 2,50');
+
+  await page.getByRole('button', { name: /Categoria\s*Mercado/ }).click();
+  const tc = page.getByRole('dialog', { name: 'Trocar categoria' });
+  await tc.getByRole('searchbox').fill('Compras');
+  await tc.getByRole('button', { name: 'Compras', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 60000 });
+  await shot(page, 'detalhe-regra', tema);
+  await page.getByRole('button', { name: 'Só este lançamento' }).click();
+  expect(await esperar(async () => (await tudo()).lancamentos.find((l) => l.id === criado.id && l.cat === 'Compras'))).toBeTruthy();
+  ok('planilha: categoria trocada para Compras (pergunta da regra respondida)');
+
+  // ---------- edição direta na planilha → app em ~10s ----------
+  if (!SEM_PLANILHA) {
+    await writeFile(join(TROCA, 'teste-id.txt'), criado.id);
+    console.log('AGUARDANDO_EDICAO_MANUAL');
+    const sinal = await esperar(async () => { try { await access(SINAL); return true; } catch { return false; } }, 20 * 60000, 1000);
+    if (!sinal) throw new Error('Edição manual não sinalizada');
+    const t0 = Number((await readFile(SINAL, 'utf8')).trim()) || Date.now();
+    await expect(page.locator('h1')).toHaveText('TESTE APP EDITADO', { timeout: 30000 });
+    const seg = Math.round((Date.now() - t0) / 100) / 10;
+    ok('tempo real: edição feita na planilha apareceu no app em ' + seg + 's');
+    if (seg > 15) falhas.push('edição manual demorou ' + seg + 's para aparecer');
+  }
+
+  await page.getByRole('button', { name: 'Excluir lançamento' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Excluir lançamento' }).click();
+  await expect(page.locator('h1')).toHaveText('Lançamentos');
+  expect(await esperar(async () => !(await tudo()).lancamentos.some((l) => l.id === criado.id))).toBeTruthy();
+  await expect(page.getByText(/TESTE APP/)).toHaveCount(0, { timeout: 20000 });
+  ok('planilha e app: TESTE APP excluído dos dois lados');
+
+  // ---------- categoria e regra de teste ----------
+  await page.goto(URL0 + '#/categorias');
+  await page.getByRole('button', { name: 'Nova' }).click();
+  await page.locator('#nome').fill('TESTE CAT APP');
+  await page.locator('#orc').fill('10');
+  await page.getByRole('button', { name: 'Violeta (R$ 5)' }).click();
+  await page.getByRole('button', { name: 'lazer', exact: true }).click();
+  await shot(page, 'categorias-nova', tema);
+  await page.getByRole('button', { name: 'Salvar' }).click();
+  await expect(page.getByText('Categoria criada na planilha.')).toBeVisible({ timeout: 60000 });
+  const cat = await esperar(async () => (await tudo()).categorias.find((c) => c.nome === 'TESTE CAT APP'));
+  expect(!!(cat && cat.orc === 10 && cat.grupo === 'Variável' && cat.icon === 'lazer' && cat.tone === 'nota-5')).toBe(true);
+  ok('planilha: categoria TESTE CAT APP criada (Orçamento + aba App)');
+
+  await page.getByRole('button', { name: /TESTE CAT APP/ }).click();
+  await page.locator('#nome').fill('TESTE CAT APP 2');
+  await page.locator('#orc').fill('20');
+  await page.getByRole('button', { name: 'Salvar' }).click();
+  expect(await esperar(async () => (await tudo()).categorias.find((c) => c.nome === 'TESTE CAT APP 2' && c.orc === 20))).toBeTruthy();
+  ok('planilha: categoria renomeada e orçamento alterado');
+
+  await page.goto(URL0 + '#/regras');
+  await page.getByRole('button', { name: 'Nova' }).click();
+  await page.locator('#chave').fill('teste regra app');
+  await page.locator('#cat').selectOption({ label: 'TESTE CAT APP 2' });
+  await page.getByRole('button', { name: 'Salvar' }).click();
+  expect(await esperar(async () => (await tudo()).regras.find((r) => r.chave === 'TESTE REGRA APP' && r.cat === 'TESTE CAT APP 2'))).toBeTruthy();
+  ok('planilha: regra TESTE REGRA APP criada');
+  await page.getByRole('button', { name: /TESTE REGRA APP/ }).click();
+  await page.locator('#chave').fill('TESTE REGRA APP 2');
+  await page.getByRole('button', { name: 'Salvar' }).click();
+  expect(await esperar(async () => (await tudo()).regras.find((r) => r.chave === 'TESTE REGRA APP 2'))).toBeTruthy();
+  ok('planilha: regra editada');
+  await page.getByRole('button', { name: /TESTE REGRA APP 2/ }).click();
+  await page.getByRole('button', { name: 'Excluir regra' }).click();
+  expect(await esperar(async () => !(await tudo()).regras.some((r) => r.chave.startsWith('TESTE REGRA')))).toBeTruthy();
+  ok('planilha: regra excluída');
+
+  await page.goto(URL0 + '#/categorias');
+  await page.getByRole('button', { name: /TESTE CAT APP 2/ }).click();
+  await page.getByRole('button', { name: 'Excluir categoria' }).click();
+  expect(await esperar(async () => !(await tudo()).categorias.some((c) => c.nome.startsWith('TESTE CAT')))).toBeTruthy();
+  ok('planilha: categoria excluída');
+
+  const filtrados = erros.filter((e) => !/status of 4\d\d/.test(e));
+  if (filtrados.length) falhas.push(`[${tema}/escrita] console:\n  ` + filtrados.join('\n  '));
+  await ctx.close();
+}
+
+const browser = await chromium.launch();
 try {
-  for (const tema of ['light', 'dark']) {
-    try { await rodar(tema); } catch (e) { falhas.push(`[${tema}] ${e.message.split('\n').slice(0, 6).join(' ')}`); }
+  if (!process.argv.includes('--so-escrita')) {
+    for (const tema of ['light', 'dark']) {
+      try { await rodarLeitura(browser, tema); } catch (e) { falhas.push(`[${tema}] ${e.message.split('\n').slice(0, 6).join(' ')}`); }
+    }
+  }
+  if (!process.argv.includes('--so-leitura')) {
+    try { await rodarEscrita(browser, 'light'); } catch (e) { falhas.push(`[escrita] ${e.message.split('\n').slice(0, 6).join(' ')}`); }
   }
 } finally {
+  // limpeza de segurança: nada de TESTE fica na planilha
+  try {
+    const t = await tudo();
+    for (const l of t.lancamentos.filter((x) => /^TESTE APP/.test(x.desc))) await post('excluirLancamento', { id: l.id });
+    for (const r of t.regras.filter((x) => /^TESTE REGRA/.test(x.chave))) await post('excluirRegra', { chave: r.chave });
+    for (const c of t.categorias.filter((x) => /^TESTE CAT/.test(x.nome))) await post('excluirCategoria', { nome: c.nome });
+  } catch (e) { falhas.push('limpeza: ' + e.message); }
+  await browser.close();
   server.close();
 }
-console.log('Passos OK (' + passos.length + '):\n- ' + passos.join('\n- '));
+console.log('\nPassos OK: ' + passos.length);
 if (falhas.length) { console.log('\nFALHAS:\n' + falhas.join('\n')); process.exit(1); }
-console.log('\nTudo certo nos dois temas.');
+console.log('Tudo certo.');

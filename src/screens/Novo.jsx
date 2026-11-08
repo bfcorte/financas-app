@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Icon, CategoryIcon, SegmentedControl } from '../ds/index.js';
-import { useDados, num, novoId, isoData, rotuloDia, mesDe, somaMes, NOME_GRUPO, tipoDoGrupo } from '../store.jsx';
+import { useDados, num, isoData, rotuloDia, mesDe, somaMes } from '../store.jsx';
 import { navegar } from '../router.js';
 import { Tela, Folha, Alca, SeletorCategoria, S } from '../ui.jsx';
 
@@ -11,49 +11,57 @@ function opcoesData() {
 }
 
 export default function Novo() {
-  const { d, sel, addLancs, setMes } = useDados();
+  const { d, sel, criarLancamentos, setMes, online, avisar } = useDados();
   const datas = useRef(opcoesData()).current;
   const [tipo, setTipo] = useState('despesa');
-  const padrao = (t) => { const g = sel.gruposPicker(t); return (g.find((x) => x.itens.length) || { itens: [d.cats[0]] }).itens[0].id; };
+  const padrao = (t) => { const g = sel.gruposPicker(t).find((x) => x.itens.length); return g ? g.itens[0].nome : ''; };
   const [catPorTipo, setCatPorTipo] = useState(() => ({ despesa: padrao('despesa'), entrada: padrao('entrada'), reserva: padrao('reserva') }));
   const [valor, setValor] = useState('');
   const [desc, setDesc] = useState('');
   const [aberto, setAberto] = useState(false);
   const [campo, setCampo] = useState('');
-  const [vals, setVals] = useState({ conta: 'Itaú', forma: 'Pix', data: datas[0].v, parc: 'À vista' });
+  const contas = d.contas.length ? d.contas : ['Dinheiro'];
+  const formas = d.formas.length ? d.formas : ['Pix / Dinheiro'];
+  const [vals, setVals] = useState({ conta: contas[0], forma: formas.find((f) => /pix/i.test(f)) || formas[0], data: datas[0].v, parc: 'À vista' });
+  const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
   const valorRef = useRef(null);
 
-  const catId = sel.catPorId[catPorTipo[tipo]] ? catPorTipo[tipo] : padrao(tipo);
-  const cat = sel.catPorId[catId];
+  const catNome = sel.catPorNome[catPorTipo[tipo]] ? catPorTipo[tipo] : padrao(tipo);
+  const cat = sel.catPorNome[catNome] || null;
   const cor = { despesa: 'var(--ink)', entrada: 'var(--jade)', reserva: 'var(--violet)' }[tipo];
 
   const camposDef = [
-    { id: 'conta', icon: 'banco', k: 'Conta', opcoes: ['Itaú', 'Cartão Itaú', 'Dinheiro'].map((v) => ({ v, label: v })) },
-    { id: 'forma', icon: 'cartao', k: 'Forma', opcoes: ['Pix', 'Débito', 'Crédito', 'Boleto', 'Dinheiro'].map((v) => ({ v, label: v })) },
+    { id: 'conta', icon: 'banco', k: 'Conta', opcoes: contas.map((v) => ({ v, label: v })) },
+    { id: 'forma', icon: 'cartao', k: 'Forma', opcoes: formas.map((v) => ({ v, label: v })) },
     { id: 'data', icon: 'calendario', k: 'Data', opcoes: datas },
     { id: 'parc', icon: 'lista', k: 'Parcelas', opcoes: ['À vista', '2x', '3x', '6x', '10x', '12x'].map((v) => ({ v, label: v })) }
   ];
   const campoAtual = camposDef.find((c) => c.id === campo);
   const rotuloCampo = (c) => (c.opcoes.find((o) => o.v === vals[c.id]) || { label: vals[c.id] }).label;
 
-  const salvar = () => {
+  const salvar = async () => {
+    if (salvando) return;
     const v = num(valor);
     if (!(v > 0)) { setErro('Digite o valor para salvar.'); if (valorRef.current) valorRef.current.focus(); return; }
+    if (!cat) { setErro('Escolha uma categoria.'); return; }
+    if (!online) { avisar('Sem conexão: não dá para lançar agora.'); return; }
     const n = vals.parc === 'À vista' ? 1 : parseInt(vals.parc, 10);
-    const base = { catId, conta: vals.conta, forma: vals.forma, origem: 'manual', obs: '', tipo: tipoDoGrupo(cat.grupo), desc: desc.trim() || cat.nome };
-    const novos = [];
+    const base = { cat: cat.nome, conta: vals.conta, forma: vals.forma, obs: '', desc: desc.trim() || cat.nome };
+    const itens = [];
     const parcela = Math.round((v / n) * 100) / 100;
     for (let k = 0; k < n; k++) {
       const dia = vals.data.slice(8);
       const ym = somaMes(mesDe(vals.data), k);
       const ult = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5)), 0).getDate();
       const data = ym + '-' + String(Math.min(Number(dia), ult)).padStart(2, '0');
-      novos.push({ ...base, id: novoId('l'), data, valor: k === n - 1 ? Math.round((v - parcela * (n - 1)) * 100) / 100 : parcela, parc: n > 1 ? (k + 1) + '/' + n : '' });
+      itens.push({ ...base, data, valor: k === n - 1 ? Math.round((v - parcela * (n - 1)) * 100) / 100 : parcela, parc: n > 1 ? (k + 1) + '/' + n : '' });
     }
-    addLancs(novos);
+    setSalvando(true);
     setMes(mesDe(vals.data));
     navegar('painel');
+    const r = await criarLancamentos(itens);
+    if (r) avisar(n > 1 ? n + ' parcelas lançadas na planilha.' : 'Lançamento salvo na planilha.', 'ok');
   };
 
   return (
@@ -86,10 +94,10 @@ export default function Novo() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <span className="rotulo" style={S.rotulo}>Categoria</span>
               <button type="button" onClick={() => setAberto(true)} aria-haspopup="dialog" style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 60, padding: '8px 16px', border: 0, borderRadius: 14, background: 'var(--surface-raised)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', textAlign: 'left', cursor: 'pointer' }}>
-                <CategoryIcon icon={cat.icon} tone={cat.tone} size={36} />
+                {cat ? <CategoryIcon icon={cat.icon} tone={cat.tone} size={36} /> : <span className="fp-cat-icon fp-cat-icon--pend" style={{ width: 36, height: 36 }}><Icon name="duvida" size={20} /></span>}
                 <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 16, fontWeight: 600 }}>{cat.nome}</span>
-                  <span style={{ fontSize: 13, color: 'var(--ink-muted)' }}>{NOME_GRUPO[cat.grupo]} · toque para trocar</span>
+                  <span style={{ fontSize: 16, fontWeight: 600 }}>{cat ? cat.nome : 'Escolher categoria'}</span>
+                  <span style={{ fontSize: 13, color: 'var(--ink-muted)' }}>{cat ? cat.grupo + ' · toque para trocar' : 'Crie categorias em Ajustes'}</span>
                 </span>
                 <span style={{ color: 'var(--ink-muted)' }}><Icon name="seta" size={18} /></span>
               </button>
@@ -107,7 +115,7 @@ export default function Novo() {
           </div>
         </div>
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '12px 16px max(30px, calc(var(--bottom) + 12px))', background: 'var(--surface)', borderTop: '1px solid var(--line)' }}>
-          <button type="button" className="fp-btn fp-btn--primario fp-btn--block" onClick={salvar}>Salvar lançamento</button>
+          <button type="button" className="fp-btn fp-btn--primario fp-btn--block" onClick={salvar} disabled={salvando}>Salvar lançamento</button>
         </div>
       </section>
 
@@ -130,7 +138,7 @@ export default function Novo() {
       ) : null}
 
       {aberto ? (
-        <SeletorCategoria grupos={sel.gruposPicker(tipo)} selecionada={catId}
+        <SeletorCategoria grupos={sel.gruposPicker(tipo)} selecionada={catNome}
           onEscolher={(id) => { setCatPorTipo({ ...catPorTipo, [tipo]: id }); setAberto(false); }} onFechar={() => setAberto(false)} />
       ) : null}
     </Tela>
