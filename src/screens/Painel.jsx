@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { Icon, Money, KpiCard, CategoryIcon, BudgetBar, TransactionRow } from '../ds/index.js';
 import { useDados, brl, nomeMes, mesAnterior, MESES, ddmm, rotuloQuando } from '../store.jsx';
 import { Tela, Barra, Folha, Alca } from '../ui.jsx';
+import { useTema } from '../tema.js';
 
 export default function Painel() {
   const { d, sel, setMes } = useDados();
   const [mesAberto, setMesAberto] = useState(false);
+  const { tema, setPref } = useTema();
+  const escuro = tema === 'dark';
   const mes = d.mes;
   const doMes = sel.doMes(mes);
   const t = sel.totais(doMes);
@@ -53,7 +56,13 @@ export default function Painel() {
               {nomeMes(mes)}
               <Icon name="saida" size={18} />
             </button>
-            <a href="#/ajustes" aria-label="Ajustes" style={{ width: 40, height: 40, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.1)', color: 'var(--on-header)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17 }}>F</a>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button type="button" onClick={() => setPref(escuro ? 'claro' : 'escuro')} aria-label={escuro ? 'Usar tema claro' : 'Usar tema escuro'}
+                style={{ width: 40, height: 40, borderRadius: '50%', border: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.1)', color: 'var(--on-header)', cursor: 'pointer' }}>
+                <Icon name={escuro ? 'sol' : 'lua'} size={20} />
+              </button>
+              <a href="#/ajustes" aria-label="Ajustes" style={{ width: 40, height: 40, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.1)', color: 'var(--on-header)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17 }}>F</a>
+            </div>
           </div>
           <span className="rotulo" style={{ color: 'var(--on-header-muted)', textTransform: 'uppercase' }}>Sobrou no mês</span>
           <div style={{ '--ink': 'var(--on-header)' }}>

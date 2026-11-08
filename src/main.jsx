@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import './ds/index.js';
 import './app.css';
 import App from './App.jsx';
+import { iniciarTema } from './tema.js';
+
+iniciarTema();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

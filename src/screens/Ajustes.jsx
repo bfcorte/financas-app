@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Icon, Button, StatusBadge, CategoryIcon } from '../ds/index.js';
+import { Icon, Button, StatusBadge, CategoryIcon, SegmentedControl } from '../ds/index.js';
+import { useTema } from '../tema.js';
 import { useDados, rotuloQuando } from '../store.jsx';
 import { Tela, Voltar, Chave, Aviso, useAviso, S } from '../ui.jsx';
 import { AcaoConfirmar } from './Detalhe.jsx';
@@ -9,6 +10,7 @@ export default function Ajustes() {
   const [importado, setImportado] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
   const [aviso, mostrarAviso] = useAviso(3000);
+  const { pref, setPref } = useTema();
   const imp = rotuloQuando(d.importacao.quando);
   const t = d.importacao.trouxe;
 
@@ -51,6 +53,15 @@ export default function Ajustes() {
               </div>
             </div>
             <Button variant="secundario" icon="sync" block onClick={() => { importar(); setImportado(true); }}>{importado ? 'Nada novo desde ' + imp.hora : 'Importar agora'}</Button>
+          </section>
+
+          <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <h2 className="rotulo" style={S.rotulo}>Aparência</h2>
+            <SegmentedControl value={pref} onChange={setPref} aria-label="Tema"
+              options={[{ value: 'auto', label: 'Automático' }, { value: 'claro', label: 'Claro' }, { value: 'escuro', label: 'Escuro' }]} />
+            <span style={{ margin: '0 4px', fontSize: 13, lineHeight: '18px', color: 'var(--ink-muted)' }}>
+              {pref === 'auto' ? 'Segue o tema do iPhone.' : pref === 'claro' ? 'Sempre claro, como no design original.' : 'Sempre escuro.'}
+            </span>
           </section>
 
           <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

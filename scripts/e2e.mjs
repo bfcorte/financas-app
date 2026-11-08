@@ -74,6 +74,29 @@ async function rodar(tema) {
   }
   ok('rotas diretas + screenshots');
 
+  // ---------- Tema: botão no Painel e opção em Ajustes ----------
+  const outro = tema === 'dark' ? 'light' : 'dark';
+  const dataTema = () => page.evaluate(() => document.documentElement.dataset.theme);
+  await ir('painel');
+  await page.getByRole('button', { name: tema === 'dark' ? 'Usar tema claro' : 'Usar tema escuro' }).click();
+  expect(await dataTema()).toBe(outro);
+  await page.reload();
+  expect(await dataTema()).toBe(outro);
+  await shot(page, 'painel-forcado-' + outro, tema);
+  await ir('ajustes');
+  await expect(page.getByRole('tab', { name: outro === 'light' ? 'Claro' : 'Escuro' })).toHaveAttribute('aria-selected', 'true');
+  await shot(page, 'ajustes-tema', tema);
+  await page.getByRole('tab', { name: 'Automático' }).click();
+  expect(await dataTema()).toBe(tema);
+  await page.getByRole('tab', { name: 'Claro' }).click();
+  expect(await dataTema()).toBe('light');
+  await page.getByRole('button', { name: 'Restaurar dados de exemplo' }).click();
+  await page.getByRole('button', { name: 'Restaurar dados', exact: true }).click();
+  expect(await dataTema()).toBe('light');
+  await page.getByRole('tab', { name: 'Automático' }).click();
+  expect(await dataTema()).toBe(tema);
+  ok('tema: alternar no Painel, escolher em Ajustes, persiste e não é apagado ao restaurar');
+
   // ---------- Painel ----------
   await ir('painel');
   await expect(page.getByText('Sobrou no mês')).toBeVisible();

@@ -21,7 +21,12 @@
     (function () {
       try {
         var m = window.matchMedia('(prefers-color-scheme: dark)');
-        var set = function () { document.documentElement.setAttribute('data-theme', m.matches ? 'dark' : 'light'); };
+        var pref = 'auto';
+        try { pref = localStorage.getItem('financas-pessoais:tema') || 'auto'; } catch (e) {}
+        var set = function () {
+          var escuro = pref === 'escuro' || (pref !== 'claro' && m.matches);
+          document.documentElement.setAttribute('data-theme', escuro ? 'dark' : 'light');
+        };
         set();
         if (m.addEventListener) m.addEventListener('change', set); else if (m.addListener) m.addListener(set);
       } catch (e) {}
